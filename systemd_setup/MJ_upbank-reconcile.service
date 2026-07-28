@@ -1,0 +1,10 @@
+# NOTE: Replace $USER with your system username and $HOME with your full home path (e.g., /home/username)
+# Systemd requires absolute paths for these directives.
+[Unit]
+Description=UpBank Daily Reconciliation Job
+
+[Service]
+Type=oneshot
+User=$USER
+WorkingDirectory=$HOME/source/mobile-notifications
+ExecStart=$HOME/source/mobile-notifications/src/scripts/reconcile.sh

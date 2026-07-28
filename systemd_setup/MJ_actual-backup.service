@@ -1,0 +1,15 @@
+# NOTE: Replace $USER with your system username and $HOME with your full home path (e.g., /home/username)
+# Systemd requires absolute paths for these directives.
+[Unit]
+Description=Actual Budget Daily Backup to Google Drive
+After=network.target
+
+[Service]
+Type=oneshot
+User=$USER
+ExecStart=$HOME/source/mobile-notifications/src/scripts/backup-actual.sh
+StandardOutput=append:$HOME/source/mobile-notifications/logs/backup.log
+StandardError=append:$HOME/source/mobile-notifications/logs/backup.log
+
+[Install]
+WantedBy=multi-user.target
