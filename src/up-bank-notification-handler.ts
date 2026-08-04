@@ -1,6 +1,9 @@
 import { logger } from './logger';
 import { UP_BANK_ACCOUNT_MAP } from './account-maps';
 import { initializeActualProxy } from './actual-util';
+
+let webhookQueue: Promise<any> = Promise.resolve();
+
 export interface UpWebhookPayload {
     data: {
         type: string;
@@ -43,6 +46,12 @@ async function getTransactionDetails(transactionId: string) {
 }
 
 export async function handleUpWebhook(payload: UpWebhookPayload) {
+    const task = webhookQueue.then(() => processWebhook(payload));
+    webhookQueue = task.catch(() => {});
+    return task;
+}
+
+async function processWebhook(payload: UpWebhookPayload) {
     logger.info(`Received Up Webhook: ${JSON.stringify(payload, null, 2)}`);
 
     if (payload.data.attributes.eventType === 'TRANSACTION_CREATED') {

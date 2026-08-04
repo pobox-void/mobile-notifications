@@ -71,17 +71,17 @@ app.post('/webhooks/up', async (req: any, res) => {
     }
 });
 
-app.get('/api/data', authMiddleware, async (req, res) => {
+app.get('/api/health', authMiddleware, async (req, res) => {
     let proxy: any = null;
     try {
         proxy = await actualProxy.initializeActualProxy();
-        const accounts = await proxy.getAccounts()
+        const accounts = await proxy.getAccounts();
         logger.info(`accounts: ${JSON.stringify(accounts, null, 3)}`)
-        res.status(200).send('{}')
+        res.status(200).json({ status: 'ok', actualBudget: 'up', accounts: accounts.length });
         return
     } catch (error) {
-        logger.error('Error in /api/data:', error);
-        res.status(500).send('Internal Server Error');
+        logger.error('Error in /api/health:', error);
+        res.status(503).json({ status: 'degraded', actualBudget: 'down' });
     } finally {
         if (proxy) await proxy.shutdown();
     }
