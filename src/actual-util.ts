@@ -73,6 +73,28 @@ export async function initializeActualProxy() {
         }
     }
 
+    async function deleteTransaction(id) {
+        try {
+            const result = await api.deleteTransaction(id)
+            return result
+        } catch (e: any) {
+            if (e.code === 'SQLITE_READONLY_DBMOVED') {
+                logger.warn("SQLITE_READONLY_DBMOVED detected. Re-initializing Actual API and retrying...");
+                try {
+                    await initActual();
+                    logger.info("Re-initialization successful. Retrying delete...");
+                    const result = await api.deleteTransaction(id);
+                    return result;
+                } catch (retryError) {
+                    logger.error("Failed to delete transaction after retry:", retryError);
+                    throw retryError;
+                }
+            } else {
+                throw e;
+            }
+        }
+    }
+
     async function getAccounts() {
         const accounts = await api.getAccounts()
         return accounts
@@ -106,7 +128,7 @@ export async function initializeActualProxy() {
         await api.shutdown();
     }
 
-    return { normalizeAmount, getCategories, getCategoryGroups, getAccounts, importTransactions, syncChanges, getTransactionsForAccount, getAccountBalance, shutdown }
+    return { normalizeAmount, getCategories, getCategoryGroups, getAccounts, importTransactions, deleteTransaction, syncChanges, getTransactionsForAccount, getAccountBalance, shutdown }
 }
 
 if (require.main === module) {

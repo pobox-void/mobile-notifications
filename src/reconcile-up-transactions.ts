@@ -87,6 +87,7 @@ async function reconcile() {
     const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
     const emailLines: string[] = [];
+    let reconciled = true;
 
     const log = (message: string) => {
         const timestamp = new Date().toISOString();
@@ -207,12 +208,13 @@ async function reconcile() {
                         const result = await actualProxy.importTransactions(actualAccountId, transactionsToImport);
                         log(`Import Result: ${JSON.stringify(result)}`);
                     } catch (err) {
+                        reconciled = false;
                         log(`Error importing transactions: ${err}`);
                     }
                 }
 
                 if (missingInUp.length > 0) {
-                    const missingUpMsg = `Found ${missingInUp.length} transactions in Actual that are MISSING in Up (and have imported_id):`;
+                    const missingUpMsg = `Transactions Deleted in Actual:`;
                     log(missingUpMsg);
                     emailLog(missingUpMsg);
                     missingInUp.forEach(t => {
@@ -220,35 +222,51 @@ async function reconcile() {
                         log(tMsg);
                         emailLog(tMsg);
                     });
-                    log('  (These might be deleted in Up or manually added with a fake ID in Actual)');
+
+                    // 5. Fix: Delete transactions that no longer exist in Up
+                    log('Deleting transactions no longer present in Up from Actual...');
+                    for (const t of missingInUp) {
+                        try {
+                            await actualProxy.deleteTransaction(t.id);
+                            log(`Deleted transaction ${t.imported_id} from Actual.`);
+                        } catch (err) {
+                            reconciled = false;
+                            log(`Error deleting transaction ${t.imported_id}: ${err}`);
+                        }
+                    }
                 }
             }
 
             // 6. Balance Reconciliation
-            // Re-fetch Actual Balance to account for any imports
-            const finalActualBalance = await actualProxy.getAccountBalance(actualAccountId);
-            const diff = finalActualBalance - upBalance;
+            // Account for any imports and deletions when computing the expected balance.
+            // getAccountBalance can briefly return a stale value right after mutations,
+            // so retry until it converges before judging success.
+            const importedTotal = missingInActual.reduce((sum, t) => sum + t.attributes.amount.valueInBaseUnits, 0);
+            const deletedTotal = missingInUp.reduce((sum, t) => sum + t.amount, 0);
+            const expectedFinalBalance = actualBalance + importedTotal - deletedTotal;
 
-            // Calculate explained difference based on transactions known to be in Actual but not Up
-            // (transactions missing in Actual were just imported, so they should be in both now)
-            const explainedDiff = missingInUp.reduce((sum, t) => sum + t.amount, 0);
+            let finalActualBalance = await actualProxy.getAccountBalance(actualAccountId);
+            for (let attempt = 0; attempt < 5 && Math.abs(finalActualBalance - expectedFinalBalance) >= 1; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+                finalActualBalance = await actualProxy.getAccountBalance(actualAccountId);
+            }
+            const diff = finalActualBalance - upBalance;
 
             log(`\n--- Balance Reconciliation ---`);
             log(`Up Bank Balance: ${(upBalance / 100).toFixed(2)}`);
             log(`Actual Budget Balance: ${(finalActualBalance / 100).toFixed(2)}`);
             log(`Difference: ${(diff / 100).toFixed(2)}`);
-            log(`Sum of Transactions in Actual but not Up: ${(explainedDiff / 100).toFixed(2)}`);
 
             emailLog(`\n--- Balance Reconciliation ---`);
             emailLog(`Difference: ${(diff / 100).toFixed(2)}`);
-            emailLog(`Explained Difference: ${(explainedDiff / 100).toFixed(2)}`);
 
-            if (Math.abs(diff - explainedDiff) < 1) {
-                const msg = `✅ Difference is explained by the ${missingInUp.length} transactions missing in Up.`;
+            if (Math.abs(diff) < 1) {
+                const msg = `✅ Balances match.`;
                 log(msg);
                 emailLog(msg);
             } else {
-                const msg = `❌ Difference is NOT fully explained. Unexplained difference: ${((diff - explainedDiff) / 100).toFixed(2)}`;
+                reconciled = false;
+                const msg = `❌ Difference is NOT fully explained. Unexplained difference: ${(diff / 100).toFixed(2)}`;
                 log(msg);
                 emailLog(msg);
                 log(`Note: Discrepancies outside the checked date range (${startDate} to ${endDate}) may cause unexplained differences.`);
@@ -263,7 +281,8 @@ async function reconcile() {
         // Send Email
         try {
             log('Sending reconciliation summary email...');
-            await sendEmail(emailLines.join('\n'));
+            const subject = reconciled ? '✅ Up Bank Reconciliation' : '❌ Up Bank Reconciliation';
+            await sendEmail(emailLines.join('\n'), undefined, subject);
         } catch (emailError) {
             log(`Failed to send summary email: ${emailError}`);
         }
